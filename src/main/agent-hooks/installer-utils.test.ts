@@ -326,6 +326,20 @@ describe('wrapPosixHookCommand', () => {
     )
   })
 
+  it('guards on ${VAR-} so Grok does not treat the env var as required', () => {
+    const cmd = wrapPosixHookCommand('/does/not/exist.sh', {}, { requiredEnvVar: 'ORCA_PANE_KEY' })
+    expect(cmd).toBe(
+      `if [ -n "\${ORCA_PANE_KEY-}" ] && [ -f '/does/not/exist.sh' ] && [ -r '/does/not/exist.sh' ] && [ -x '/does/not/exist.sh' ]; then /bin/sh '/does/not/exist.sh'; else cat >/dev/null 2>&1 || :; fi`
+    )
+    expect(cmd).not.toContain('[ -n "$ORCA_PANE_KEY" ]')
+  })
+
+  it('rejects requiredEnvVar values that are not POSIX identifiers', () => {
+    expect(() =>
+      wrapPosixHookCommand('/does/not/exist.sh', {}, { requiredEnvVar: 'ORCA_PANE_KEY;rm' })
+    ).toThrow(/POSIX identifier/)
+  })
+
   it.skipIf(process.platform === 'win32')(
     'returns exit code 0 when the script does not exist (no-op)',
     () => {
@@ -379,6 +393,33 @@ describe('wrapPosixHookCommand', () => {
       expect(result.status).toBe(7)
     }
   )
+
+  it.skipIf(process.platform === 'win32')(
+    'skips the script when requiredEnvVar is unset and still exits 0',
+    () => {
+      const scriptPath = join(tmpDir, 'must-not-run.sh')
+      const markerPath = join(tmpDir, 'ran')
+      writeFileSync(scriptPath, `#!/bin/sh\ntouch '${markerPath}'\nexit 0\n`, 'utf-8')
+      chmodSync(scriptPath, 0o755)
+      const cmd = wrapPosixHookCommand(scriptPath, {}, { requiredEnvVar: 'ORCA_PANE_KEY' })
+      const result = spawnSync('/bin/sh', ['-c', cmd], {
+        env: { PATH: process.env.PATH ?? '/bin' }
+      })
+      expect(result.status).toBe(0)
+      expect(existsSync(markerPath)).toBe(false)
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')('runs the script when requiredEnvVar is set', () => {
+    const scriptPath = join(tmpDir, 'must-run.sh')
+    writeFileSync(scriptPath, '#!/bin/sh\nexit 3\n', 'utf-8')
+    chmodSync(scriptPath, 0o755)
+    const cmd = wrapPosixHookCommand(scriptPath, {}, { requiredEnvVar: 'ORCA_PANE_KEY' })
+    const result = spawnSync('/bin/sh', ['-c', cmd], {
+      env: { PATH: process.env.PATH ?? '/bin', ORCA_PANE_KEY: 'tab-1:leaf-1' }
+    })
+    expect(result.status).toBe(3)
+  })
 })
 
 const qualifiedWindowsPowerShellCommand =
