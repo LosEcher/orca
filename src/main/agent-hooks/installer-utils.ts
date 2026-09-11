@@ -129,13 +129,34 @@ function quotePosixShellString(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`
 }
 
+export type WrapPosixHookCommandOptions = {
+  requiredEnvVar?: string
+}
+
+const POSIX_ENV_VAR_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function requiredEnvVarGuard(name: string): string {
+  if (!POSIX_ENV_VAR_NAME.test(name)) {
+    throw new Error(
+      `wrapPosixHookCommand requiredEnvVar must be a POSIX identifier, got ${JSON.stringify(name)}`
+    )
+  }
+  // Why: Grok expands $VAR/${VAR} in hook command strings and treats unset vars as required.
+  // ${VAR-} is optional (empty default) so standalone grok sessions skip instead of warning.
+  return `[ -n "\${${name}-}" ]`
+}
+
 // Why: a stale managed hook entry (left over after the user wiped userData,
 // switched dev↔prod installs, or had a partial install fail) used to fire
 // `/bin/sh "<missing path>"` on every tool call, which exits 127 and surfaces
 // as `PreToolUse hook (failed) error: hook exited with code 127` in the agent
 // transcript. Guarding for a regular readable executable file makes a broken
 // install a silent no-op without hiding failures from a script that starts.
-export function wrapPosixHookCommand(scriptPath: string, env: Record<string, string> = {}): string {
+export function wrapPosixHookCommand(
+  scriptPath: string,
+  env: Record<string, string> = {},
+  options: WrapPosixHookCommandOptions = {}
+): string {
   // Why: POSIX single-quote escape so $, `, ", and \ in scriptPath are taken
   // literally — avoids a shell-injection footgun if a future caller passes an
   // arbitrary path.
@@ -144,7 +165,13 @@ export function wrapPosixHookCommand(scriptPath: string, env: Record<string, str
     .map(([key, value]) => `${key}='${value.replaceAll("'", "'\\''")}'`)
     .join(' ')
   const invocation = envPrefix ? `${envPrefix} /bin/sh ${quoted}` : `/bin/sh ${quoted}`
-  return `if [ -f ${quoted} ] && [ -r ${quoted} ] && [ -x ${quoted} ]; then ${invocation}; else ${POSIX_HOOK_STDIN_DRAIN_COMMAND}; fi`
+  const guards = [
+    ...(options.requiredEnvVar ? [requiredEnvVarGuard(options.requiredEnvVar)] : []),
+    `[ -f ${quoted} ]`,
+    `[ -r ${quoted} ]`,
+    `[ -x ${quoted} ]`
+  ]
+  return `if ${guards.join(' && ')}; then ${invocation}; else ${POSIX_HOOK_STDIN_DRAIN_COMMAND}; fi`
 }
 
 function quotePowerShellString(value: string): string {

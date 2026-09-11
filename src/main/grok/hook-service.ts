@@ -108,10 +108,16 @@ function getManagedScriptPath(): string {
   return getSharedManagedScriptPath(getManagedScriptFileName())
 }
 
+const GROK_REQUIRED_ENV_VAR = 'ORCA_PANE_KEY'
+
+function wrapGrokPosixHookCommand(scriptPath: string): string {
+  return wrapPosixHookCommand(scriptPath, {}, { requiredEnvVar: GROK_REQUIRED_ENV_VAR })
+}
+
 function getManagedCommand(scriptPath: string): string {
   return process.platform === 'win32'
     ? wrapWindowsHookCommand(scriptPath)
-    : wrapPosixHookCommand(scriptPath)
+    : wrapGrokPosixHookCommand(scriptPath)
 }
 
 function getManagedScript(target: 'local' | 'posix' = 'local'): string {
@@ -293,7 +299,7 @@ export class GrokHookService {
         }
       }
 
-      buildInstalledConfig(config, wrapPosixHookCommand(remoteScriptPath), 'grok-hook.sh')
+      buildInstalledConfig(config, wrapGrokPosixHookCommand(remoteScriptPath), 'grok-hook.sh')
       await writeManagedScriptRemote(sftp, remoteScriptPath, getManagedScript('posix'))
       await writeHooksJsonRemote(sftp, remoteConfigPath, config)
 
